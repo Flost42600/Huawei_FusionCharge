@@ -102,6 +102,7 @@ class FusionChargeCoordinator(DataUpdateCoordinator[ChargerState]):
                 schedule_on=self.data.schedule_on,
                 plans=self.data.plans,
                 plan_count=self.data.plan_count,
+                plan_meta=self.data.plan_meta,
             )
         return state
 

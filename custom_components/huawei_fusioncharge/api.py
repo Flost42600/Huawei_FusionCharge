@@ -126,6 +126,7 @@ class ChargerState:
     schedule_on: bool | None = None
     plan_count: int | None = None
     plans: list[dict] | None = None
+    plan_meta: dict | None = None  # query-plan fields other than the plans
     control_read: bool = False  # True when the values above were read this time
 
 
@@ -176,6 +177,12 @@ class FusionChargeClient:
         except requests.RequestException as err:
             raise CannotConnect(f"{method} {_path(url)} failed: {type(err).__name__}") from err
         if response.status_code >= 500:
+            # Huawei often answers 500 with its reason in a JSON body: show it.
+            reason = _error_reason(response)
+            if reason:
+                raise CloudError(
+                    f"{method} {_path(url)} returned HTTP {response.status_code}: {reason}"
+                )
             raise CannotConnect(f"{method} {_path(url)} returned HTTP {response.status_code}")
         return response
 
@@ -186,7 +193,11 @@ class FusionChargeClient:
         and a successful write often has an empty body.
         """
         if response.status_code >= 400:
-            raise CloudError(f"HTTP {response.status_code} on {_path(response.url)}")
+            reason = _error_reason(response)
+            raise CloudError(
+                f"HTTP {response.status_code} on {_path(response.url)}"
+                + (f": {reason}" if reason else "")
+            )
         if not response.content:
             return None
         try:
@@ -494,6 +505,7 @@ class FusionChargeClient:
                     plans = plan.get("plans")
                     state.plans = plans if isinstance(plans, list) else None
                     state.plan_count = len(plans) if isinstance(plans, list) else None
+                    state.plan_meta = {k: v for k, v in plan.items() if k != "plans"}
                     state.control_read = True
                 except CloudError as err:
                     _LOGGER.warning("Could not read the working mode or schedule: %s", err)
@@ -645,7 +657,28 @@ class FusionChargeClient:
                     _LOGGER.error("Could not store the plan backup: %r", err)
 
             self._throttle()
-            self._write_plans(ids, plans, enabled)
+            try:
+                self._write_plans(ids, plans, enabled)
+            except FusionChargeError as err:
+                # Refused by the cloud: make sure nothing was half-written.
+                _LOGGER.warning(
+                    "config-plan refused (%s). Request sent: %s",
+                    err,
+                    json.dumps(self._plan_request(ids, plans, enabled)),
+                )
+                if self._wait_for(lambda: self._plans_match(ids, plans, was_on)):
+                    raise CommandNotConfirmed(
+                        f"the cloud refused the change ({err}); the plans are unchanged"
+                    ) from err
+                _LOGGER.error("Plans differ after a refused write, restoring them")
+                self._throttle()
+                self._write_plans(ids, plans, was_on)
+                restored = self._wait_for(lambda: self._plans_match(ids, plans, was_on))
+                raise CommandNotConfirmed(
+                    f"the cloud refused the change ({err}); "
+                    + ("the previous plans were restored" if restored else
+                       "check the plans in the FusionSolar app (backup in .storage)")
+                ) from err
             if self._wait_for(lambda: self._plans_match(ids, plans, enabled)):
                 _LOGGER.info("Schedule switched %s", "on" if enabled else "off")
                 return
@@ -668,17 +701,21 @@ class FusionChargeClient:
                 )
             )
 
+    @staticmethod
+    def _plan_request(ids: ChargerIds, plans: list[dict], on: bool) -> dict:
+        return {
+            "plans": [plan_to_request(p) for p in plans],
+            "switchOn": 1 if on else 0,
+            "accountId": "",
+            "dnId": ids.charger,
+        }
+
     def _write_plans(self, ids: ChargerIds, plans: list[dict], on: bool) -> None:
         self._json(
             self._request(
                 "POST",
                 f"{self._base}/rest/neteco/web/homemgr/v1/charger/plan/config-plan",
-                json={
-                    "plans": [plan_to_request(p) for p in plans],
-                    "switchOn": 1 if on else 0,
-                    "accountId": "",
-                    "dnId": ids.charger,
-                },
+                json=self._plan_request(ids, plans, on),
             )
         )
 
@@ -700,6 +737,23 @@ class FusionChargeClient:
 
 
 # ----------------------------------------------------------------- pure helpers
+
+
+def _error_reason(response: Any) -> str | None:
+    """Huawei's reason from an error body (exceptionId, descArgs, message), shortened."""
+    try:
+        body = response.json()
+    except (ValueError, AttributeError):
+        text = (getattr(response, "text", "") or "").strip()
+        return text[:200] if text and not text.startswith("<") else None
+    if not isinstance(body, dict):
+        return None
+    parts = [
+        str(body[key])
+        for key in ("exceptionId", "descArgs", "message", "description", "errorMsg", "code")
+        if body.get(key) not in (None, "", [])
+    ]
+    return " | ".join(parts)[:300] if parts else None
 
 
 def _path(url: str) -> str:

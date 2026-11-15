@@ -389,3 +389,38 @@ def test_schedule_restores_when_plans_come_back_different():
     sent = session.posted(f"{BASE}{HOME}/charger/plan/config-plan")
     assert [s["switchOn"] for s in sent] == [1, 0]
     assert api.plan_signature(sent[1]["plans"]) == api.plan_signature(REAL_PLANS)
+
+
+def test_http_500_shows_huawei_reason():
+    session = FakeSession()
+    client = logged_in_client(session)
+    session.on("POST", f"{BASE}{HOME}/charger/charge/start-charge",
+               FakeResponse({"exceptionId": "charger.offline", "descArgs": ["x"]}, status=500))
+    with pytest.raises(CloudError, match="charger.offline"):
+        client.start_charging("NE=charger")
+
+
+def test_refused_plan_write_leaves_plans_unchanged():
+    session = FakeSession()
+    client = logged_in_client(session)
+    session.on("GET", f"{BASE}{HOME}/charger/plan/query-plan", {"switchOn": 0, "plans": REAL_PLANS})
+    session.on("POST", f"{BASE}{HOME}/charger/plan/config-plan",
+               FakeResponse({"exceptionId": "plan.invalid"}, status=500))
+    with pytest.raises(CommandNotConfirmed, match="plans are unchanged"):
+        client.set_schedule_enabled("NE=charger", True)
+    assert len(session.posted(f"{BASE}{HOME}/charger/plan/config-plan")) == 1
+
+
+def test_refused_plan_write_restores_when_plans_were_lost():
+    session = FakeSession()
+    client = logged_in_client(session)
+    session.on("GET", f"{BASE}{HOME}/charger/plan/query-plan",
+               {"switchOn": 0, "plans": REAL_PLANS}, {"switchOn": 0, "plans": REAL_PLANS},
+               {"switchOn": 0, "plans": []}, {"switchOn": 0, "plans": []}, {"switchOn": 0, "plans": []},
+               {"switchOn": 0, "plans": REAL_PLANS})
+    session.on("POST", f"{BASE}{HOME}/charger/plan/config-plan",
+               FakeResponse({"exceptionId": "plan.invalid"}, status=500), FakeResponse())
+    with pytest.raises(CommandNotConfirmed, match="restored"):
+        client.set_schedule_enabled("NE=charger", True)
+    sent = session.posted(f"{BASE}{HOME}/charger/plan/config-plan")
+    assert [s["switchOn"] for s in sent] == [1, 0]
