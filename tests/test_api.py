@@ -357,11 +357,51 @@ def test_schedule_refused_when_plans_change_between_reads():
     assert not session.posted(f"{BASE}{HOME}/charger/plan/config-plan")
 
 
-def test_schedule_refused_with_one_time_plan():
+# One-time plan exactly as returned by a SmartCharger-7KS-S0 after a "Charge now".
+FINISHED_ONE_TIME = {"isValid": False, "isRepeat": False, "repeatPeriod": 0,
+                     "startTime": "1794761280000", "stopTime": "1794761400000",
+                     "chargeMode": 0, "maxChargePower": 4.0, "isNotify": False}
+
+
+def test_schedule_off_leaves_out_a_finished_one_time_plan(monkeypatch):
+    monkeypatch.setattr(api.time, "time", lambda: 1794762000.0)  # after the plan ended
     session = FakeSession()
     client = logged_in_client(session)
-    plans = [dict(REAL_PLANS[0], isRepeat=False, startTime="1790000000000")]
-    session.on("GET", f"{BASE}{HOME}/charger/plan/query-plan", {"switchOn": 1, "plans": plans})
+    stored = [*REAL_PLANS, FINISHED_ONE_TIME]
+    session.on("GET", f"{BASE}{HOME}/charger/plan/query-plan",
+               {"switchOn": 1, "plans": stored}, {"switchOn": 1, "plans": stored},
+               {"switchOn": 0, "plans": REAL_PLANS})
+    session.on("POST", f"{BASE}{HOME}/charger/plan/config-plan", FakeResponse())
+    backups = []
+    client.set_schedule_enabled("NE=charger", False, lambda p, on: backups.append(p))
+    sent = session.posted(f"{BASE}{HOME}/charger/plan/config-plan")[0]
+    assert sent["switchOn"] == 0
+    assert api.plan_signature(sent["plans"]) == api.plan_signature(REAL_PLANS)
+    assert backups == [stored]  # the backup keeps everything
+
+
+def test_ongoing_one_time_plan_is_resent_with_its_times(monkeypatch):
+    monkeypatch.setattr(api.time, "time", lambda: 1794761300.0)  # during the plan
+    session = FakeSession()
+    client = logged_in_client(session)
+    stored = [*REAL_PLANS, FINISHED_ONE_TIME]
+    session.on("GET", f"{BASE}{HOME}/charger/plan/query-plan",
+               {"switchOn": 1, "plans": stored}, {"switchOn": 1, "plans": stored},
+               {"switchOn": 0, "plans": stored})
+    session.on("POST", f"{BASE}{HOME}/charger/plan/config-plan", FakeResponse())
+    client.set_schedule_enabled("NE=charger", False)
+    sent = session.posted(f"{BASE}{HOME}/charger/plan/config-plan")[0]
+    one_time = [p for p in sent["plans"] if not p["isRepeat"]][0]
+    assert one_time["startTime"] == "1794761280000"
+    assert one_time["calculatedStartTime"] == 1648  # 16:48 UTC
+    assert one_time["calculatedStopTime"] == 1650
+
+
+def test_one_time_plan_with_odd_times_is_refused():
+    session = FakeSession()
+    client = logged_in_client(session)
+    odd = dict(FINISHED_ONE_TIME, startTime="soon", stopTime="later")
+    session.on("GET", f"{BASE}{HOME}/charger/plan/query-plan", {"switchOn": 1, "plans": [*REAL_PLANS, odd]})
     with pytest.raises(UnsafeOperation):
         client.set_schedule_enabled("NE=charger", False)
 
@@ -424,3 +464,44 @@ def test_refused_plan_write_restores_when_plans_were_lost():
         client.set_schedule_enabled("NE=charger", True)
     sent = session.posted(f"{BASE}{HOME}/charger/plan/config-plan")
     assert [s["switchOn"] for s in sent] == [1, 0]
+
+
+def test_schedule_on_refused_when_every_plan_is_unchecked():
+    from custom_components.huawei_fusioncharge.exceptions import NoActivePlan
+
+    session = FakeSession()
+    client = logged_in_client(session)
+    unchecked = [dict(p, isValid=False, isNotify=False) for p in REAL_PLANS]
+    session.on("GET", f"{BASE}{HOME}/charger/plan/query-plan", {"switchOn": 0, "plans": unchecked})
+    with pytest.raises(NoActivePlan):
+        client.set_schedule_enabled("NE=charger", True)
+    assert not session.posted(f"{BASE}{HOME}/charger/plan/config-plan")
+
+
+def test_session_export_and_import_round_trip():
+    session = FakeSession()
+    client = logged_in_client(session)
+    import requests
+
+    real = requests.Session()
+    real.cookies.set("JSESSIONID", "abc", domain="uni004eu5.fusionsolar.huawei.com", path="/")
+    real.headers["roarand"] = "csrf"
+    client._session = real
+    saved = client.export_session()
+    assert saved["company_dn"] == "NE=1" and saved["cookies"][0]["value"] == "abc"
+
+    other = api.FusionChargeClient("user", "secret", "uni004eu5")
+    assert other.import_session(saved)
+    assert other._session.cookies.get("JSESSIONID") == "abc"
+    assert other._session.headers["roarand"] == "csrf"
+    assert other._company_dn == "NE=1"
+    assert not api.FusionChargeClient("user", "secret", "region01eu5").import_session(saved)
+
+
+def test_read_is_retried_once_after_a_network_error():
+    session = FakeSession()
+    client = logged_in_client(session)
+    session.on("POST", f"{BASE}{HOME}/device/get-realtime-info",
+               FakeResponse(status=503), {"111": [{"id": 10004, "value": "Idle"}]})
+    state = client.get_state("NE=charger", include_control=False)
+    assert state.connector[10004].value == "Idle"

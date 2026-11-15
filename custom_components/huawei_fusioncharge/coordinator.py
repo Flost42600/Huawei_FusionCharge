@@ -6,7 +6,7 @@ import dataclasses
 import logging
 import time
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -28,6 +28,7 @@ from .const import (
     OPT_ENABLE_CONTROL,
     OPT_SCAN_INTERVAL,
     STORAGE_KEY_BACKUP,
+    STORAGE_KEY_SESSION,
     STORAGE_VERSION,
 )
 from .exceptions import (
@@ -36,6 +37,7 @@ from .exceptions import (
     CaptchaRequired,
     CommandNotConfirmed,
     FusionChargeError,
+    NoActivePlan,
     UnsafeOperation,
 )
 
@@ -72,6 +74,14 @@ class FusionChargeCoordinator(DataUpdateCoordinator[ChargerState]):
         )
         self._pending_backups: list[dict] = []
         self.last_command: dict[str, Any] | None = None
+        # Connection health, for the alarm entities.
+        self.auth_failed = False
+        self.last_success: datetime | None = None
+        self.last_error: str | None = None
+        self.session_store: Store[dict] = Store(
+            hass, STORAGE_VERSION, f"{STORAGE_KEY_SESSION}.{entry.entry_id}", private=True
+        )
+        self._saved_session_hash: int | None = None
 
     async def _async_update_data(self) -> ChargerState:
         now = time.monotonic()
@@ -83,13 +93,27 @@ class FusionChargeCoordinator(DataUpdateCoordinator[ChargerState]):
                 self.client.get_state, self.dn, include_control
             )
         except (CaptchaRequired, AuthenticationError) as err:
+            changed = not self.auth_failed
+            self.auth_failed = True
+            self.last_error = "auth"
+            if changed:
+                # Home Assistant only notifies entities when success turns into
+                # failure; after an earlier network failure it would stay silent.
+                self.async_update_listeners()
             raise ConfigEntryAuthFailed(
                 translation_domain=DOMAIN, translation_key="auth_failed"
             ) from err
         except CannotConnect as err:
+            self.last_error = str(err)
             raise UpdateFailed(f"FusionSolar unreachable: {err}") from err
         except FusionChargeError as err:
+            self.last_error = str(err)
             raise UpdateFailed(f"FusionSolar error: {err}") from err
+
+        self.auth_failed = False
+        self.last_error = None
+        self.last_success = dt_util.utcnow()
+        await self.async_save_session()
 
         if state.control_read:
             self._last_control_read = now
@@ -103,6 +127,7 @@ class FusionChargeCoordinator(DataUpdateCoordinator[ChargerState]):
                 plans=self.data.plans,
                 plan_count=self.data.plan_count,
                 plan_meta=self.data.plan_meta,
+                device_meta=self.data.device_meta,
             )
         return state
 
@@ -123,6 +148,11 @@ class FusionChargeCoordinator(DataUpdateCoordinator[ChargerState]):
             self.config_entry.async_start_reauth(self.hass)
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="auth_failed"
+            ) from err
+        except NoActivePlan as err:
+            outcome = "refused"
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="no_active_plan"
             ) from err
         except UnsafeOperation as err:
             outcome = "refused"
@@ -156,6 +186,20 @@ class FusionChargeCoordinator(DataUpdateCoordinator[ChargerState]):
             self._force_control = True
             await self.async_refresh()
         return result
+
+    async def async_save_session(self) -> None:
+        """Save the session cookies when they changed, so a restart needs no new login."""
+        data = self.client.export_session()
+        if data is None:
+            return
+        digest = hash(repr(data))
+        if digest == self._saved_session_hash:
+            return
+        try:
+            await self.session_store.async_save(data)
+            self._saved_session_hash = digest
+        except Exception as err:  # noqa: BLE001 - losing the saved session only costs a login
+            _LOGGER.warning("Could not save the FusionSolar session: %r", err)
 
     def make_backup_callback(self) -> Callable[[list[dict], bool], None]:
         """Callback for the executor thread; saved to .storage after the command."""

@@ -34,11 +34,18 @@ SIG_SOFTWARE: Final = 10001  # on the charger group
 SIG_HARDWARE: Final = 10002  # on the charger group
 SIG_MODEL: Final = 10007  # on the charger group
 
+CHARGING_POWER_THRESHOLD: Final = 0.05  # kW; above this the car is charging
+CHARGE_PENDING_SECONDS: Final = 150  # how long a start/stop request is shown before the cloud confirms it
+
 WORKING_MODE_OPTIONS: Final = ["normal", "pv_preferred"]  # signal 20002 = 0 / 1
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY_BACKUP: Final = f"{DOMAIN}_plan_backup"
+STORAGE_KEY_SESSION: Final = f"{DOMAIN}_session"
 BACKUP_KEEP: Final = 10
 
 CAPTCHA_VIEW_URL: Final = f"/api/{DOMAIN}/captcha/{{token}}"
 CAPTCHA_TTL: Final = 600  # seconds
+
+VERSION: Final = "0.1.3"  # keep in sync with manifest.json
+CARD_URL: Final = f"/{DOMAIN}/huawei-fusioncharge-card.js"

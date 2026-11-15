@@ -37,3 +37,7 @@ class CommandNotConfirmed(FusionChargeError):
 
 class UnsafeOperation(FusionChargeError):
     """A write was refused locally because it could damage the user's settings."""
+
+
+class NoActivePlan(UnsafeOperation):
+    """The schedule cannot be switched on: every plan is unchecked in the app."""

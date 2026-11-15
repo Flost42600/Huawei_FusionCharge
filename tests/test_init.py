@@ -51,6 +51,16 @@ class FakeClient:
         if verify_code == "wrong":
             raise InvalidCaptcha(b"\x89PNGagain")
 
+    def ensure_session(self):
+        self.calls.append(("ensure_session",))
+
+    def export_session(self):
+        return {"subdomain": "uni004eu5", "company_dn": "NE=1", "roarand": "t", "cookies": []}
+
+    def import_session(self, data):
+        self.calls.append(("import_session", data))
+        return bool(data)
+
     def list_chargers(self):
         return [{"dn": DN, "name": "Borne garage"}]
 
@@ -208,10 +218,16 @@ async def test_flow_bad_subdomain(hass: HomeAssistant):
 async def test_read_only_by_default(hass: HomeAssistant):
     await setup(hass, control=False)
     assert hass.states.get("sensor.borne_garage_charging_power").state == "7.0"
-    assert hass.states.get("sensor.borne_garage_status").state == "Charging"
+    assert hass.states.get("sensor.borne_garage_status").state == "charging"
+    assert hass.states.get("binary_sensor.borne_garage_vehicle_plugged_in").state == "on"
     assert hass.states.get("binary_sensor.borne_garage_schedule_active").state == "on"
     assert hass.states.get("sensor.borne_garage_current_working_mode").state == "pv_preferred"
-    assert hass.states.get("button.borne_garage_start_charging") is None
+    assert hass.states.get("switch.borne_garage_charge") is None
+    assert hass.states.get("button.borne_garage_arm_schedule") is None
+    assert hass.states.get("binary_sensor.borne_garage_cloud_fusionsolar").state == "on"
+    assert hass.states.get("binary_sensor.borne_garage_charger_online").state == "on"
+    assert hass.states.get("binary_sensor.borne_garage_login_required").state == "off"
+    assert hass.states.get("sensor.borne_garage_last_communication").state not in ("unknown", "unavailable")
     assert hass.states.get("switch.borne_garage_scheduled_charging") is None
     assert hass.states.get("select.borne_garage_working_mode") is None
 
@@ -220,11 +236,17 @@ async def test_commands_when_enabled(hass: HomeAssistant):
     entry = await setup(hass, control=True)
     client = entry.runtime_data.client
 
+    # Already charging (7 kW): switching on sends nothing, switching off stops.
     await hass.services.async_call(
-        "button", "press", {"entity_id": "button.borne_garage_start_charging"}, blocking=True
+        "switch", "turn_on", {"entity_id": "switch.borne_garage_charge"}, blocking=True
     )
+    assert not any(c[0] == "start" for c in client.calls)
     await hass.services.async_call(
-        "button", "press", {"entity_id": "button.borne_garage_stop_charging"}, blocking=True
+        "switch", "turn_off", {"entity_id": "switch.borne_garage_charge"}, blocking=True
+    )
+    assert hass.states.get("switch.borne_garage_charge").state == "off"  # requested, awaiting the cloud
+    await hass.services.async_call(
+        "switch", "turn_on", {"entity_id": "switch.borne_garage_charge"}, blocking=True
     )
     await hass.services.async_call(
         "button", "press", {"entity_id": "button.borne_garage_arm_schedule"}, blocking=True
@@ -271,3 +293,73 @@ async def test_auth_failure_starts_reauth(hass: HomeAssistant):
     await hass.async_block_till_done()
     flows = hass.config_entries.flow.async_progress()
     assert any(f["context"]["source"] == "reauth" for f in flows)
+
+
+async def test_connection_alarm_entities(hass: HomeAssistant):
+    from custom_components.huawei_fusioncharge.exceptions import CannotConnect
+
+    entry = await setup(hass, control=False)
+    coordinator = entry.runtime_data
+
+    FakeClient.fail_state_with = CannotConnect("timeout")
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.borne_garage_cloud_fusionsolar").state == "off"
+    assert hass.states.get("binary_sensor.borne_garage_login_required").state == "off"
+
+    FakeClient.fail_state_with = CaptchaRequired(b"img")
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.borne_garage_cloud_fusionsolar").state == "off"
+    assert hass.states.get("binary_sensor.borne_garage_login_required").state == "on"
+    assert any(f["context"]["source"] == "reauth" for f in hass.config_entries.flow.async_progress())
+
+    FakeClient.fail_state_with = None
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.borne_garage_cloud_fusionsolar").state == "on"
+    assert hass.states.get("binary_sensor.borne_garage_login_required").state == "off"
+
+
+async def test_saved_session_is_reused_after_restart(hass: HomeAssistant, hass_storage):
+    entry = make_entry(control=False)
+    hass_storage[f"{DOMAIN}_session.{entry.entry_id}"] = {
+        "version": 1, "key": f"{DOMAIN}_session.{entry.entry_id}",
+        "data": {"subdomain": "uni004eu5", "company_dn": "NE=1", "cookies": [{"name": "a", "value": "b"}]},
+    }
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    calls = entry.runtime_data.client.calls
+    assert calls[0][0] == "import_session" and calls[0][1]["company_dn"] == "NE=1"
+    assert ("ensure_session",) in calls
+    assert not any(c[0] == "login" for c in calls)
+
+
+async def test_no_ticked_plan_gives_a_clear_message(hass: HomeAssistant):
+    from custom_components.huawei_fusioncharge.exceptions import NoActivePlan
+
+    entry = await setup(hass, control=True)
+
+    def refuse(dn, enabled, backup=None):
+        raise NoActivePlan("every plan is unchecked")
+
+    entry.runtime_data.client.set_schedule_enabled = refuse
+    with pytest.raises(HomeAssistantError) as err:
+        await hass.services.async_call(
+            "switch", "turn_on", {"entity_id": "switch.borne_garage_scheduled_charging"},
+            blocking=True,
+        )
+    assert err.value.translation_key == "no_active_plan"
+
+
+async def test_old_buttons_are_removed(hass: HomeAssistant):
+    from homeassistant.helpers import entity_registry as er
+
+    entry = make_entry(control=True)
+    entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    registry.async_get_or_create("button", DOMAIN, f"{DN}_start_charging", config_entry=entry)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert registry.async_get_entity_id("button", DOMAIN, f"{DN}_start_charging") is None

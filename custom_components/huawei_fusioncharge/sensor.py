@@ -35,6 +35,7 @@ from .const import (
 )
 from .coordinator import FusionChargeConfigEntry
 from .entity import FusionChargeEntity
+from .status import STATUS_OPTIONS, status_code, status_key
 
 
 def _numeric(signal: Signal | None) -> float | None:
@@ -67,7 +68,9 @@ class FusionChargeSensorDescription(SensorEntityDescription):
 SENSORS: tuple[FusionChargeSensorDescription, ...] = (
     FusionChargeSensorDescription(
         key="status",
-        value_fn=lambda s: _text(s.connector.get(SIG_STATUS)),
+        device_class=SensorDeviceClass.ENUM,
+        options=STATUS_OPTIONS,
+        value_fn=status_key,
         exists_fn=lambda s: SIG_STATUS in s.connector,
     ),
     FusionChargeSensorDescription(
@@ -140,11 +143,28 @@ async def async_setup_entry(
 ) -> None:
     coordinator = entry.runtime_data
     state = coordinator.data
-    async_add_entities(
+    entities: list[SensorEntity] = [
         FusionChargeSensor(coordinator, description)
         for description in SENSORS
         if description.exists_fn(state)
-    )
+    ]
+    entities.append(LastSuccessSensor(coordinator, "last_success"))
+    async_add_entities(entities)
+
+
+class LastSuccessSensor(FusionChargeEntity, SensorEntity):
+    """Time of the last successful read; never unavailable, for staleness alarms."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    @property
+    def native_value(self):
+        return self.coordinator.last_success
 
 
 class FusionChargeSensor(FusionChargeEntity, SensorEntity):
@@ -184,7 +204,7 @@ class FusionChargeSensor(FusionChargeEntity, SensorEntity):
             }
         if key == "status":
             signal = data.connector.get(SIG_STATUS)
-            return {"raw_value": signal.real} if signal else None
+            return {"code": status_code(data), "raw_value": signal.value} if signal else None
         if key == "working_mode" and self.coordinator.last_command:
             return {"last_command": self.coordinator.last_command}
         return None

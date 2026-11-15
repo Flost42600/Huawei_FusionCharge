@@ -1,4 +1,4 @@
-"""Buttons: start charging, stop charging, arm the schedule (commands enabled only)."""
+"""Button: arm the schedule (commands enabled only). Charging itself is a switch."""
 
 from __future__ import annotations
 
@@ -21,13 +21,6 @@ class FusionChargeButtonDescription(ButtonEntityDescription):
 
 
 BUTTONS: tuple[FusionChargeButtonDescription, ...] = (
-    # The app's "Charge now": starts right away, even outside the plans.
-    FusionChargeButtonDescription(
-        key="start_charging", icon="mdi:play", press_fn=lambda c: c.start_charging
-    ),
-    FusionChargeButtonDescription(
-        key="stop_charging", icon="mdi:stop", press_fn=lambda c: c.stop_charging
-    ),
     # The app's "Schedule": the charger waits for the plans instead of charging now.
     FusionChargeButtonDescription(
         key="arm_schedule", icon="mdi:calendar-check", press_fn=lambda c: c.arm_schedule

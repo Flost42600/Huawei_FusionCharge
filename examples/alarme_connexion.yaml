@@ -1,0 +1,71 @@
+# Alarmes de connexion de la borne Huawei FusionCharge.
+#
+# Les noms d'entités ci-dessous correspondent à une installation en français
+# avec une borne nommée « Borne garage ». Adaptez-les si besoin
+# (Paramètres > Appareils et services > Huawei FusionCharge > la borne).
+#
+# Remplacez notify.notify par votre service de notification
+# (par exemple notify.mobile_app_mon_telephone).
+
+automation:
+  # Home Assistant ne joint plus le cloud FusionSolar depuis 5 minutes
+  - id: borne_alarme_cloud
+    alias: "Borne : cloud FusionSolar injoignable"
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.borne_garage_cloud_fusionsolar
+        to: "off"
+        for: "00:05:00"
+    actions:
+      - action: notify.notify
+        data:
+          title: "Borne de recharge"
+          message: >
+            Le cloud FusionSolar ne répond plus depuis 5 minutes.
+            Dernière communication : {{ states('sensor.borne_garage_derniere_communication') }}.
+            Erreur : {{ state_attr('binary_sensor.borne_garage_cloud_fusionsolar', 'last_error') }}
+
+  # Huawei redemande le mot de passe ou un code de sécurité
+  - id: borne_alarme_reconnexion
+    alias: "Borne : reconnexion FusionSolar requise"
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.borne_garage_reconnexion_requise
+        to: "on"
+    actions:
+      - action: notify.notify
+        data:
+          title: "Borne de recharge"
+          message: >
+            FusionSolar demande une nouvelle connexion : ouvrez Paramètres >
+            Appareils et services dans Home Assistant pour saisir le code.
+            Les commandes de la borne sont suspendues d'ici là.
+
+  # La borne elle-même n'est plus connectée au cloud (coupure Wi-Fi, électrique…)
+  - id: borne_alarme_hors_ligne
+    alias: "Borne : hors ligne"
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.borne_garage_borne_en_ligne
+        to: "off"
+        for: "00:05:00"
+    actions:
+      - action: notify.notify
+        data:
+          title: "Borne de recharge"
+          message: "La borne n'est plus connectée au cloud Huawei depuis 5 minutes."
+
+  # Aucune donnée depuis 15 minutes, quelle qu'en soit la cause
+  - id: borne_alarme_donnees_anciennes
+    alias: "Borne : données trop anciennes"
+    triggers:
+      - trigger: template
+        value_template: >
+          {% set last = states('sensor.borne_garage_derniere_communication') %}
+          {{ last not in ('unknown', 'unavailable')
+             and (now() - as_datetime(last)) > timedelta(minutes=15) }}
+    actions:
+      - action: notify.notify
+        data:
+          title: "Borne de recharge"
+          message: "Aucune donnée de la borne depuis plus de 15 minutes."

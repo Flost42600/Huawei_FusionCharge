@@ -51,7 +51,7 @@
         "title": "Options",
         "description": "Les commandes agissent sur la borne réelle via le cloud FusionSolar. Elles sont désactivées par défaut.",
         "data": {
-          "enable_control": "Activer les commandes (démarrer, arrêter, programmation, mode de travail)",
+          "enable_control": "Activer les commandes (charge, programmation, mode de travail)",
           "scan_interval": "Intervalle de mise à jour temps réel (secondes)",
           "control_interval": "Intervalle de lecture du mode et de la programmation (secondes)"
         }
@@ -60,13 +60,41 @@
   },
   "entity": {
     "sensor": {
-      "status": { "name": "État" },
-      "power": { "name": "Puissance de charge" },
-      "current": { "name": "Courant" },
-      "session_energy": { "name": "Énergie de la session" },
-      "session_duration": { "name": "Durée de la session" },
-      "total_energy": { "name": "Énergie totale" },
-      "connection": { "name": "État de connexion" },
+      "status": {
+        "name": "État",
+        "state": {
+          "standby": "Au repos",
+          "plugged": "Véhicule branché",
+          "scheduled_waiting": "En attente de la programmation",
+          "charging": "En charge",
+          "charging_ended": "Charge terminée",
+          "fault": "Défaut",
+          "orderly_waiting": "En attente (charge ordonnée)",
+          "upgrading": "Mise à jour",
+          "charging_starting": "Démarrage de la charge",
+          "alarm": "Alarme",
+          "green_waiting": "En attente d'énergie verte",
+          "green_charging": "Charge à l'énergie verte"
+        }
+      },
+      "power": {
+        "name": "Puissance de charge"
+      },
+      "current": {
+        "name": "Courant"
+      },
+      "session_energy": {
+        "name": "Énergie de la session"
+      },
+      "session_duration": {
+        "name": "Durée de la session"
+      },
+      "total_energy": {
+        "name": "Énergie totale"
+      },
+      "connection": {
+        "name": "État de connexion"
+      },
       "working_mode": {
         "name": "Mode de travail actuel",
         "state": {
@@ -74,10 +102,29 @@
           "pv_preferred": "Énergie verte (PV prioritaire)"
         }
       },
-      "plan_count": { "name": "Plages programmées" }
+      "plan_count": {
+        "name": "Plages programmées"
+      },
+      "last_success": {
+        "name": "Dernière communication"
+      }
     },
     "binary_sensor": {
-      "schedule_active": { "name": "Programmation active" }
+      "schedule_active": {
+        "name": "Programmation active"
+      },
+      "cloud_connected": {
+        "name": "Cloud FusionSolar"
+      },
+      "charger_online": {
+        "name": "Borne en ligne"
+      },
+      "reauth_needed": {
+        "name": "Reconnexion requise"
+      },
+      "vehicle_plugged": {
+        "name": "Véhicule branché"
+      }
     },
     "select": {
       "working_mode_select": {
@@ -89,19 +136,37 @@
       }
     },
     "switch": {
-      "schedule": { "name": "Charge programmée" }
+      "schedule": {
+        "name": "Charge programmée"
+      },
+      "charge": {
+        "name": "Charge"
+      }
     },
     "button": {
-      "start_charging": { "name": "Démarrer la charge" },
-      "stop_charging": { "name": "Arrêter la charge" },
-      "arm_schedule": { "name": "Armer la programmation" }
+      "arm_schedule": {
+        "name": "Armer la programmation"
+      }
     }
   },
   "exceptions": {
-    "auth_failed": { "message": "La connexion FusionSolar demande votre intervention (mot de passe ou code de sécurité). Ouvrez Paramètres > Appareils et services." },
-    "control_disabled": { "message": "Les commandes sont désactivées dans les options de l'intégration." },
-    "unsafe": { "message": "Refusé pour protéger vos réglages : {reason}" },
-    "not_confirmed": { "message": "La borne n'a pas confirmé le changement : {reason}" },
-    "command_failed": { "message": "La commande a échoué : {reason}" }
+    "auth_failed": {
+      "message": "La connexion FusionSolar demande votre intervention (mot de passe ou code de sécurité). Ouvrez Paramètres > Appareils et services."
+    },
+    "control_disabled": {
+      "message": "Les commandes sont désactivées dans les options de l'intégration."
+    },
+    "unsafe": {
+      "message": "Refusé pour protéger vos réglages : {reason}"
+    },
+    "not_confirmed": {
+      "message": "La borne n'a pas confirmé le changement : {reason}"
+    },
+    "command_failed": {
+      "message": "La commande a échoué : {reason}"
+    },
+    "no_active_plan": {
+      "message": "Aucune plage n'est cochée dans l'application FusionSolar : cochez au moins une plage (avec ses jours), puis réactivez la programmation."
+    }
   }
 }

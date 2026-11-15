@@ -4,7 +4,7 @@
 # par celles de votre intégration Volvo, et "borne_garage" par le nom de votre borne.
 #
 # Prérequis : commandes activées dans les options de Huawei FusionCharge,
-# et le test "Démarrer la charge hors plage" du README validé sur votre installation.
+# et le test « Charge hors plage » du README validé sur votre installation.
 #
 # Entrées réglables depuis Home Assistant (à créer dans Paramètres > Entrées) :
 #   input_datetime.recharge_soir_heure      (heure seule, ex. 22:00)
@@ -20,9 +20,9 @@ automation:
       - trigger: time
         at: input_datetime.recharge_soir_heure
     conditions:
-      # Véhicule branché
+      # Véhicule branché (capteur de la borne ; celui de la Volvo convient aussi)
       - condition: state
-        entity_id: binary_sensor.volvo_charging_cable_connected
+        entity_id: binary_sensor.borne_garage_vehicule_branche
         state: "on"
       # SOC disponible : "unavailable" ou "unknown" n'est jamais lu comme 0 %
       - condition: template
@@ -37,13 +37,17 @@ automation:
         value_template: >
           {{ states('sensor.volvo_battery') | float(101) < states('input_number.recharge_soir_seuil') | float(0) }}
       # Pas de charge déjà en cours
-      - condition: numeric_state
-        entity_id: sensor.borne_garage_puissance_de_charge
-        below: 0.5
+      - condition: state
+        entity_id: switch.borne_garage_charge
+        state: "off"
+      # Cloud joignable (sinon la commande ne partirait pas)
+      - condition: state
+        entity_id: binary_sensor.borne_garage_cloud_fusionsolar
+        state: "on"
     actions:
-      - action: button.press
+      - action: switch.turn_on
         target:
-          entity_id: button.borne_garage_demarrer_la_charge
+          entity_id: switch.borne_garage_charge
       - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.recharge_soir_en_cours
@@ -75,9 +79,9 @@ automation:
         entity_id: input_boolean.recharge_soir_en_cours
         state: "on"
     actions:
-      - action: button.press
+      - action: switch.turn_off
         target:
-          entity_id: button.borne_garage_arreter_la_charge
+          entity_id: switch.borne_garage_charge
         continue_on_error: true
       - delay: "00:00:30"
       # Rend la main aux plages solaires FusionSolar (à confirmer par le test 3 du README)

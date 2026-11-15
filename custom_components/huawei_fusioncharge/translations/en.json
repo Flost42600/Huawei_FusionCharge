@@ -51,7 +51,7 @@
         "title": "Options",
         "description": "Commands write to the real charger through the FusionSolar cloud. They are off by default.",
         "data": {
-          "enable_control": "Enable commands (start, stop, schedule, working mode)",
+          "enable_control": "Enable commands (charging, schedule, working mode)",
           "scan_interval": "Real-time update interval (seconds)",
           "control_interval": "Working mode and schedule update interval (seconds)"
         }
@@ -60,13 +60,41 @@
   },
   "entity": {
     "sensor": {
-      "status": { "name": "Status" },
-      "power": { "name": "Charging power" },
-      "current": { "name": "Current" },
-      "session_energy": { "name": "Session energy" },
-      "session_duration": { "name": "Session duration" },
-      "total_energy": { "name": "Total energy" },
-      "connection": { "name": "Connection status" },
+      "status": {
+        "name": "Status",
+        "state": {
+          "standby": "Standby",
+          "plugged": "Vehicle plugged in",
+          "scheduled_waiting": "Waiting for schedule",
+          "charging": "Charging",
+          "charging_ended": "Charging ended",
+          "fault": "Fault",
+          "orderly_waiting": "Waiting (orderly charging)",
+          "upgrading": "Upgrading",
+          "charging_starting": "Starting",
+          "alarm": "Alarm",
+          "green_waiting": "Waiting for green power",
+          "green_charging": "Green power charging"
+        }
+      },
+      "power": {
+        "name": "Charging power"
+      },
+      "current": {
+        "name": "Current"
+      },
+      "session_energy": {
+        "name": "Session energy"
+      },
+      "session_duration": {
+        "name": "Session duration"
+      },
+      "total_energy": {
+        "name": "Total energy"
+      },
+      "connection": {
+        "name": "Connection status"
+      },
       "working_mode": {
         "name": "Current working mode",
         "state": {
@@ -74,10 +102,29 @@
           "pv_preferred": "PV power preferred"
         }
       },
-      "plan_count": { "name": "Schedule plans" }
+      "plan_count": {
+        "name": "Schedule plans"
+      },
+      "last_success": {
+        "name": "Last communication"
+      }
     },
     "binary_sensor": {
-      "schedule_active": { "name": "Schedule active" }
+      "schedule_active": {
+        "name": "Schedule active"
+      },
+      "cloud_connected": {
+        "name": "Cloud FusionSolar"
+      },
+      "charger_online": {
+        "name": "Charger online"
+      },
+      "reauth_needed": {
+        "name": "Login required"
+      },
+      "vehicle_plugged": {
+        "name": "Vehicle plugged in"
+      }
     },
     "select": {
       "working_mode_select": {
@@ -89,19 +136,37 @@
       }
     },
     "switch": {
-      "schedule": { "name": "Scheduled charging" }
+      "schedule": {
+        "name": "Scheduled charging"
+      },
+      "charge": {
+        "name": "Charge"
+      }
     },
     "button": {
-      "start_charging": { "name": "Start charging" },
-      "stop_charging": { "name": "Stop charging" },
-      "arm_schedule": { "name": "Arm schedule" }
+      "arm_schedule": {
+        "name": "Arm schedule"
+      }
     }
   },
   "exceptions": {
-    "auth_failed": { "message": "The FusionSolar login needs your attention (password or security code). Open Settings > Devices & services." },
-    "control_disabled": { "message": "Commands are disabled in the integration options." },
-    "unsafe": { "message": "Refused to protect your settings: {reason}" },
-    "not_confirmed": { "message": "The charger did not confirm the change: {reason}" },
-    "command_failed": { "message": "The command failed: {reason}" }
+    "auth_failed": {
+      "message": "The FusionSolar login needs your attention (password or security code). Open Settings > Devices & services."
+    },
+    "control_disabled": {
+      "message": "Commands are disabled in the integration options."
+    },
+    "unsafe": {
+      "message": "Refused to protect your settings: {reason}"
+    },
+    "not_confirmed": {
+      "message": "The charger did not confirm the change: {reason}"
+    },
+    "command_failed": {
+      "message": "The command failed: {reason}"
+    },
+    "no_active_plan": {
+      "message": "No plan is ticked in the FusionSolar app: tick at least one plan (with its days), then switch the schedule on again."
+    }
   }
 }

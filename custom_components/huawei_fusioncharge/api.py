@@ -35,6 +35,7 @@ from .exceptions import (
     CommandNotConfirmed,
     FusionChargeError,
     InvalidCaptcha,
+    NoActivePlan,
     UnsafeOperation,
 )
 
@@ -72,6 +73,7 @@ MIN_SECONDS_BETWEEN_WRITES = 3.0
 VERIFY_CHECKS = 3
 VERIFY_PAUSE = 3.0
 PLAN_READ_PAUSE = 1.0
+RETRY_PAUSE = 2.0
 
 _sleep = time.sleep  # patched in tests
 
@@ -127,6 +129,7 @@ class ChargerState:
     plan_count: int | None = None
     plans: list[dict] | None = None
     plan_meta: dict | None = None  # query-plan fields other than the plans
+    device_meta: dict | None = None  # device-tree fields of the connector (connection status)
     control_read: bool = False  # True when the values above were read this time
 
 
@@ -399,6 +402,39 @@ class FusionChargeClient:
             _LOGGER.debug("FusionSolar session expired, logging in again")
             self.login()
 
+    # ---------------------------------------------------- session persistence
+
+    def export_session(self) -> dict[str, Any] | None:
+        """Cookies, CSRF token and company id, to survive a Home Assistant restart."""
+        with self._lock:
+            if not self._company_dn:
+                return None
+            return {
+                "subdomain": self._subdomain,
+                "company_dn": self._company_dn,
+                "roarand": self._session.headers.get("roarand"),
+                "cookies": [
+                    {"name": c.name, "value": c.value, "domain": c.domain, "path": c.path}
+                    for c in self._session.cookies
+                ],
+            }
+
+    def import_session(self, data: dict[str, Any] | None) -> bool:
+        """Load a saved session; ensure_session() then checks it is still alive."""
+        if not data or data.get("subdomain") != self._subdomain or not data.get("cookies"):
+            return False
+        with self._lock:
+            session = _new_session()
+            for cookie in data["cookies"]:
+                session.cookies.set(
+                    cookie["name"], cookie["value"], domain=cookie.get("domain"), path=cookie.get("path") or "/"
+                )
+            if data.get("roarand"):
+                session.headers["roarand"] = data["roarand"]
+            self._session = session
+            self._company_dn = data.get("company_dn")
+            return True
+
     def logout(self) -> None:
         try:
             self._request(
@@ -477,7 +513,18 @@ class FusionChargeClient:
     # -------------------------------------------------------------------- reads
 
     def get_state(self, dn: str, include_control: bool = True) -> ChargerState:
-        """Real-time values, plus working mode and schedule when asked."""
+        """Real-time values, plus working mode and schedule when asked.
+
+        A network hiccup is retried once after a short pause before giving up.
+        """
+        try:
+            return self._get_state(dn, include_control)
+        except CannotConnect as err:
+            _LOGGER.debug("Read failed (%s), retrying once", err)
+            _sleep(RETRY_PAUSE)
+            return self._get_state(dn, include_control)
+
+    def _get_state(self, dn: str, include_control: bool) -> ChargerState:
         with self._lock:
             self.ensure_session()
             ids = self._get_ids(dn)
@@ -509,6 +556,10 @@ class FusionChargeClient:
                     state.control_read = True
                 except CloudError as err:
                     _LOGGER.warning("Could not read the working mode or schedule: %s", err)
+                try:
+                    state.device_meta = self._read_device_meta(dn)
+                except CloudError as err:
+                    _LOGGER.debug("Could not read the device tree: %s", err)
             return state
 
     def _read_working_mode(self, ids: ChargerIds) -> str | None:
@@ -534,6 +585,30 @@ class FusionChargeClient:
                 except (TypeError, ValueError):
                     continue
         return None
+
+    def _read_device_meta(self, dn: str) -> dict | None:
+        """Scalar fields of the connector in the device tree (its connection status lives there)."""
+        body = self._json(
+            self._request(
+                "POST",
+                f"{self._base}/rest/dp/pvms/organization/v1/tree",
+                json={
+                    "parentDn": dn,
+                    "treeDepth": "device",
+                    "pageParam": {"needPage": True},
+                    "filterCond": {"nameType": "device", "mocIdInclude": [MOC_ID_CONNECTOR]},
+                    "displayCond": {"self": False, "status": True},
+                },
+            )
+        )
+        children = (body or {}).get("childList") if isinstance(body, dict) else None
+        if not children or not isinstance(children[0], dict):
+            return None
+        return {
+            k: v
+            for k, v in children[0].items()
+            if isinstance(v, (str, int, float, bool)) and k not in ("elementId", "elementDn", "dn", "parentDn")
+        }
 
     def _query_plan(self, ids: ChargerIds) -> dict:
         body = self._json(
@@ -645,14 +720,17 @@ class FusionChargeClient:
                 first["plans"]
             ) != plan_signature(second["plans"]):
                 raise UnsafeOperation("The plans changed between two reads")
-            plans = second["plans"]
+            stored = second["plans"]
             was_on = _truthy(second["switchOn"])
+            plans, finished = split_finished_one_time_plans(stored, int(time.time() * 1000))
             check_plans_can_be_resent(plans, enabling=enabled)
 
-            _LOGGER.info("Plans before switching the schedule: %s", json.dumps(plans))
+            _LOGGER.info("Plans before switching the schedule: %s", json.dumps(stored))
+            if finished:
+                _LOGGER.info("Leaving out %d finished one-time plan(s)", len(finished))
             if backup is not None:
                 try:
-                    backup(plans, was_on)
+                    backup(stored, was_on)
                 except Exception as err:  # noqa: BLE001 - a backup failure must not block
                     _LOGGER.error("Could not store the plan backup: %r", err)
 
@@ -667,8 +745,13 @@ class FusionChargeClient:
                     json.dumps(self._plan_request(ids, plans, enabled)),
                 )
                 if self._wait_for(lambda: self._plans_match(ids, plans, was_on)):
+                    hint = (
+                        " (a charge is in progress or planned: switch Charge off first)"
+                        if any(is_one_time(p) for p in plans)
+                        else ""
+                    )
                     raise CommandNotConfirmed(
-                        f"the cloud refused the change ({err}); the plans are unchanged"
+                        f"the cloud refused the change ({err}); the plans are unchanged{hint}"
                     ) from err
                 _LOGGER.error("Plans differ after a refused write, restoring them")
                 self._throttle()
@@ -721,9 +804,10 @@ class FusionChargeClient:
 
     def _plans_match(self, ids: ChargerIds, expected: list[dict], on: bool) -> bool:
         after = self._query_plan(ids)
+        # One-time plans are left to the cloud (it may keep or drop finished ones).
         return _truthy(after["switchOn"]) == on and plan_signature(
-            after.get("plans")
-        ) == plan_signature(expected)
+            after.get("plans"), repeating_only=True
+        ) == plan_signature(expected, repeating_only=True)
 
     def _wait_for(self, check: Callable[[], bool]) -> bool:
         for _ in range(VERIFY_CHECKS):
@@ -815,35 +899,78 @@ def hhmm(value: str) -> int:
     return int(hours) * 100 + int(minutes)
 
 
+def is_one_time(plan: dict) -> bool:
+    """A one-time plan (isRepeat false) stores epoch milliseconds instead of HH:MM."""
+    return not _truthy(plan.get("isRepeat"))
+
+
+def _epoch_ms(value: Any) -> int | None:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _utc_hhmm_from_ms(value: Any) -> int:
+    seconds = (_epoch_ms(value) or 0) // 1000
+    return (seconds // 3600 % 24) * 100 + seconds // 60 % 60
+
+
 def plan_to_request(plan: dict) -> dict:
     """A stored plan rebuilt the way the app sends it."""
+    if is_one_time(plan):
+        start, stop = _utc_hhmm_from_ms(plan["startTime"]), _utc_hhmm_from_ms(plan["stopTime"])
+    else:
+        start, stop = hhmm(plan["startTime"]), hhmm(plan["stopTime"])
     return {
         **{k: v for k, v in plan.items() if k not in PLAN_DERIVED_FIELDS},
-        "calculatedStartTime": hhmm(plan["startTime"]),
-        "calculatedStopTime": hhmm(plan["stopTime"]),
+        "calculatedStartTime": start,
+        "calculatedStopTime": stop,
         "repeat": plan.get("isRepeat"),
         "valid": plan.get("isValid"),
     }
 
 
-def plan_signature(plans: list[dict] | None) -> list[str]:
+def plan_signature(plans: list[dict] | None, repeating_only: bool = False) -> list[str]:
     """Order-independent fingerprint of every stored field."""
     return sorted(
         json.dumps({k: v for k, v in p.items() if k not in PLAN_DERIVED_FIELDS}, sort_keys=True)
         for p in plans or []
+        if not (repeating_only and is_one_time(p))
     )
+
+
+def split_finished_one_time_plans(plans: list[dict], now_ms: int) -> tuple[list[dict], list[dict]]:
+    """(plans to resend, finished one-time plans to leave out).
+
+    The cloud records a "Charge now" as a short one-time plan that stays in the
+    list after it ends (seen on a SCharger-7KS-S0). A finished one is dropped
+    when the list is written back; an ongoing or future one is kept.
+    """
+    keep, finished = [], []
+    for plan in plans:
+        end = _epoch_ms(plan.get("stopTime")) if is_one_time(plan) else None
+        (finished if end is not None and end < now_ms else keep).append(plan)
+    return keep, finished
 
 
 def check_plans_can_be_resent(plans: list[dict], enabling: bool) -> None:
     """Refuse plans that cannot be reproduced exactly."""
     if enabling and not plans:
-        raise UnsafeOperation("No plan is defined: create one in the FusionSolar app first")
+        raise UnsafeOperation("no plan is defined: create one in the FusionSolar app first")
+    if enabling and not any(_truthy(p.get("isValid")) for p in plans):
+        # The cloud answers "Charge plan parameters invalid" in this case (seen on a SCharger-7KS-S0).
+        raise NoActivePlan(
+            "every plan is unchecked: tick at least one plan in the FusionSolar app first"
+        )
     for plan in plans:
         missing = [f for f in PLAN_REQUIRED_FIELDS if f not in plan]
         if missing:
             raise UnsafeOperation(f"A plan lacks {missing}: change the schedule in the app")
-        if not plan["isRepeat"]:
-            raise UnsafeOperation("A one-time plan exists: change the schedule in the app")
+        if is_one_time(plan):
+            if _epoch_ms(plan["startTime"]) is None or _epoch_ms(plan["stopTime"]) is None:
+                raise UnsafeOperation("A one-time plan has an unexpected time format")
+            continue
         try:
             hhmm(str(plan["startTime"]))
             hhmm(str(plan["stopTime"]))

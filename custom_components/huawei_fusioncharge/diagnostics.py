@@ -45,5 +45,6 @@ async def async_get_config_entry_diagnostics(
             "schedule_on": state.schedule_on,
             "plans": state.plans,
             "plan_meta": state.plan_meta,
+            "device_meta": state.device_meta,
         },
     }
