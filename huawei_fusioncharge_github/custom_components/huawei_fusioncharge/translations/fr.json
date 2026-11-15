@@ -1,0 +1,107 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Compte FusionSolar",
+        "description": "Utilisez le compte de l'application FusionSolar. Le sous-domaine est le début de l'adresse affichée dans votre navigateur une fois connecté à FusionSolar, par exemple uni004eu5.",
+        "data": {
+          "username": "Nom d'utilisateur",
+          "password": "Mot de passe",
+          "subdomain": "Sous-domaine FusionSolar"
+        }
+      },
+      "captcha": {
+        "title": "Code de sécurité",
+        "description": "Huawei demande un code de sécurité. Saisissez les caractères affichés ci-dessous.\n\n![captcha]({captcha_url})",
+        "data": {
+          "captcha": "Code"
+        }
+      },
+      "pick_charger": {
+        "title": "Borne",
+        "data": {
+          "charger_dn": "Borne"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Nouvelle connexion",
+        "description": "La session FusionSolar de {username} a expiré. Saisissez le mot de passe ; un code de sécurité peut ensuite être demandé.",
+        "data": {
+          "password": "Mot de passe"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Identifiant ou mot de passe refusé par FusionSolar.",
+      "invalid_captcha": "Code incorrect, un nouveau code est affiché.",
+      "invalid_subdomain": "Sous-domaine invalide.",
+      "cannot_connect": "FusionSolar est injoignable.",
+      "unknown": "Erreur inattendue, voir les journaux."
+    },
+    "abort": {
+      "already_configured": "Cette borne est déjà configurée.",
+      "no_chargers": "Aucune borne trouvée sur ce compte.",
+      "cannot_connect": "FusionSolar est injoignable.",
+      "reauth_successful": "Reconnexion réussie."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "description": "Les commandes agissent sur la borne réelle via le cloud FusionSolar. Elles sont désactivées par défaut.",
+        "data": {
+          "enable_control": "Activer les commandes (démarrer, arrêter, programmation, mode de travail)",
+          "scan_interval": "Intervalle de mise à jour temps réel (secondes)",
+          "control_interval": "Intervalle de lecture du mode et de la programmation (secondes)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": { "name": "État" },
+      "power": { "name": "Puissance de charge" },
+      "current": { "name": "Courant" },
+      "session_energy": { "name": "Énergie de la session" },
+      "session_duration": { "name": "Durée de la session" },
+      "total_energy": { "name": "Énergie totale" },
+      "connection": { "name": "État de connexion" },
+      "working_mode": {
+        "name": "Mode de travail actuel",
+        "state": {
+          "normal": "Charge normale",
+          "pv_preferred": "Énergie verte (PV prioritaire)"
+        }
+      },
+      "plan_count": { "name": "Plages programmées" }
+    },
+    "binary_sensor": {
+      "schedule_active": { "name": "Programmation active" }
+    },
+    "select": {
+      "working_mode_select": {
+        "name": "Mode de travail",
+        "state": {
+          "normal": "Charge normale",
+          "pv_preferred": "Énergie verte (PV prioritaire)"
+        }
+      }
+    },
+    "switch": {
+      "schedule": { "name": "Charge programmée" }
+    },
+    "button": {
+      "start_charging": { "name": "Démarrer la charge" },
+      "stop_charging": { "name": "Arrêter la charge" },
+      "arm_schedule": { "name": "Armer la programmation" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": { "message": "La connexion FusionSolar demande votre intervention (mot de passe ou code de sécurité). Ouvrez Paramètres > Appareils et services." },
+    "control_disabled": { "message": "Les commandes sont désactivées dans les options de l'intégration." },
+    "unsafe": { "message": "Refusé pour protéger vos réglages : {reason}" },
+    "not_confirmed": { "message": "La borne n'a pas confirmé le changement : {reason}" },
+    "command_failed": { "message": "La commande a échoué : {reason}" }
+  }
+}

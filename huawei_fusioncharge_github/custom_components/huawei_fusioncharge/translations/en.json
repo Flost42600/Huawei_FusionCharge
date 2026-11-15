@@ -1,0 +1,107 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "FusionSolar account",
+        "description": "Use the account of the FusionSolar app. The subdomain is the first part of the address shown in your browser once logged in to FusionSolar, for example uni004eu5.",
+        "data": {
+          "username": "Username",
+          "password": "Password",
+          "subdomain": "FusionSolar subdomain"
+        }
+      },
+      "captcha": {
+        "title": "Security code",
+        "description": "Huawei asks for a security code. Type the characters shown below.\n\n![captcha]({captcha_url})",
+        "data": {
+          "captcha": "Code"
+        }
+      },
+      "pick_charger": {
+        "title": "Charger",
+        "data": {
+          "charger_dn": "Charger"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Log in again",
+        "description": "The FusionSolar session for {username} has ended. Enter the password; a security code may follow.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Username or password refused by FusionSolar.",
+      "invalid_captcha": "Wrong code, a new one is shown.",
+      "invalid_subdomain": "Invalid subdomain.",
+      "cannot_connect": "FusionSolar cannot be reached.",
+      "unknown": "Unexpected error, see the logs."
+    },
+    "abort": {
+      "already_configured": "This charger is already configured.",
+      "no_chargers": "No charger was found on this account.",
+      "cannot_connect": "FusionSolar cannot be reached.",
+      "reauth_successful": "Logged in again."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "description": "Commands write to the real charger through the FusionSolar cloud. They are off by default.",
+        "data": {
+          "enable_control": "Enable commands (start, stop, schedule, working mode)",
+          "scan_interval": "Real-time update interval (seconds)",
+          "control_interval": "Working mode and schedule update interval (seconds)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": { "name": "Status" },
+      "power": { "name": "Charging power" },
+      "current": { "name": "Current" },
+      "session_energy": { "name": "Session energy" },
+      "session_duration": { "name": "Session duration" },
+      "total_energy": { "name": "Total energy" },
+      "connection": { "name": "Connection status" },
+      "working_mode": {
+        "name": "Current working mode",
+        "state": {
+          "normal": "Normal charge",
+          "pv_preferred": "PV power preferred"
+        }
+      },
+      "plan_count": { "name": "Schedule plans" }
+    },
+    "binary_sensor": {
+      "schedule_active": { "name": "Schedule active" }
+    },
+    "select": {
+      "working_mode_select": {
+        "name": "Working mode",
+        "state": {
+          "normal": "Normal charge",
+          "pv_preferred": "PV power preferred"
+        }
+      }
+    },
+    "switch": {
+      "schedule": { "name": "Scheduled charging" }
+    },
+    "button": {
+      "start_charging": { "name": "Start charging" },
+      "stop_charging": { "name": "Stop charging" },
+      "arm_schedule": { "name": "Arm schedule" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": { "message": "The FusionSolar login needs your attention (password or security code). Open Settings > Devices & services." },
+    "control_disabled": { "message": "Commands are disabled in the integration options." },
+    "unsafe": { "message": "Refused to protect your settings: {reason}" },
+    "not_confirmed": { "message": "The charger did not confirm the change: {reason}" },
+    "command_failed": { "message": "The command failed: {reason}" }
+  }
+}
